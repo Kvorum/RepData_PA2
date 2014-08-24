@@ -1,0 +1,101 @@
+---
+title: Extreme weather events that caused the greatest harm to the population and
+  the economy of the U.S. in 1996-2011
+author: "Anton"
+date: "Sunday, August 24, 2014"
+output: pdf_document
+---
+#Synopsis  
+The basic goal of this report is to explore the NOAA Storm Database and answer 2 basic questions about severe weather events across the United States:  
+1. Which types of events are most harmful with respect to population health?  
+2. Which types of events have the greatest economic consequences?  
+To find out answers, data from the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database is used. The data recieved from the National Weather Service that collected it from a variety of sources: county, state and federal emergency management officials, local law enforcement officials, skywarn spotters, NWS
+damage surveys, newspaper clipping services, the insurance industry and the general public.  
+The results show us that most harmful weather events are tornados (in case 1) and floods (in case2).      
+
+#Data Processing    
+The data downloaded from the [Storm Data sourse](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2). The events in the data start in the year 1950 and end in November 2011.  
+```{r, cache = TRUE}
+rawdata <- read.csv(bzfile("repdata-data-StormData.csv.bz2"), header = TRUE, 
+                    stringsAsFactors = FALSE, strip.white=TRUE)
+```
+It's huge amount of the data. So now we need to reduce the data for our analyses. 
+```{r}
+names(rawdata)
+```
+According to the NOAA documentation all 48 weather event types recorded from 1996 to present. Now we can choose time range (no earlier than 1996/01/01) and required fields (date, event type, number of fatalities and injuries, property and crop damage estimates with their magnitude).  
+```{r}
+tidydata <- subset(rawdata, as.Date(rawdata$BGN_DATE, "%m/%d/%Y") >= "1996-01-01")
+names(tidydata) <- tolower(gsub("_", "", names(tidydata)))
+tidydata <- tidydata[c("bgndate", "evtype", "fatalities", "injuries",
+                       "propdmg", "propdmgexp", "cropdmg", "cropdmgexp")]
+tidydata$evtype <- tolower(tidydata$evtype)
+```
+Unfortunately event type parameter does not match the description in documentation. According to the documentaton we should have 48 unique values. But we have:
+```{r}
+length(unique(tidydata$evtype))
+```
+There are not enough information in the data to decide which types is "flood/flash/flood" or "winter mix", for example.
+But we can choose some simple cases which are fully consistent with the documentation, for example: 
+```{r}
+tidydata$evtype[which(grepl("tstm wind$", tidydata$evtype))] <- "thunderstorm wind"
+tidydata$evtype[which(grepl("tornado", tidydata$evtype))] <- "tornado"
+tidydata$evtype[which(grepl("surge", tidydata$evtype))] <- "storm surge/tide"
+```  
+Now we can create two datasets in accordance with our objectives.   
+```{r}
+healthdmg <- tidydata[!tidydata$fatalities == 0 | !tidydata$injuries == 0,
+                      c("evtype", "fatalities", "injuries")]
+
+economicdmg <- tidydata[!tidydata$propdmg == 0 | !tidydata$cropdmg == 0,
+                      c("evtype", "propdmg", "propdmgexp", "cropdmg", "cropdmgexp")]
+```  
+Also to answer the second question we need to convert numeric and character values into a numeric data.  
+
+```{r, cache = TRUE}
+strvalue <- c("K", "M", "B", "")
+numvalue <- c(1000, 1000000, 1000000000, 1)
+for (i in 1:nrow(economicdmg)) {
+        a <- numvalue[strvalue == economicdmg$propdmgexp[i]]*economicdmg$propdmg[i]
+        b <- numvalue[strvalue == economicdmg$cropdmgexp[i]]*economicdmg$cropdmg[i]
+        economicdmg$dmg[i] <- a+b
+}
+```  
+Finally we summarise and sort the data.   
+```{r}
+totalhealthdmg <- aggregate(fatalities+injuries~evtype, data=healthdmg, sum)
+names(totalhealthdmg) <- c("evtype", "dmg")
+totalhealthdmg <- totalhealthdmg[order(-totalhealthdmg$dmg),]
+totalhealthdmg$evtypes <- reorder(totalhealthdmg$evtype, -totalhealthdmg$dmg)
+
+totaleconomicdmg <- aggregate(dmg~evtype, data=economicdmg, sum)
+totaleconomicdmg <- totaleconomicdmg[order(-totaleconomicdmg$dmg),]
+totaleconomicdmg$evtypes <- reorder(totaleconomicdmg$evtype, -totaleconomicdmg$dmg)
+```  
+
+#Results    
+Now we make two plots to show answers on our two questions.  
+```{r}
+library(ggplot2)
+library(RColorBrewer)
+
+cols <- brewer.pal(9, "Reds")
+pal <- colorRampPalette(cols)
+qplot(evtypes, dmg, data = totalhealthdmg[1:10,], 
+      xlab = "Weather event type (top 10)", 
+      ylab = "Total number of fatalities and injuries",
+      geom = "histogram", fill = evtypes, stat = "identity")+
+        scale_fill_manual(values=rev(pal(10)))+ theme_bw()+
+        theme(axis.text.x = element_blank())
+
+
+qplot(evtypes, dmg/1000000000, data = totaleconomicdmg[1:10,], 
+      xlab = "Weather event type (top 10)", 
+      ylab = "Total amount of damages (billions $)",
+      geom = "histogram", fill = evtypes, stat = "identity")+
+        scale_fill_brewer(palette="RdYlGn")+ theme_bw()+
+        theme(axis.text.x = element_blank())
+```    
+
+In conclusion, we can see that tornados are most harmful with respect to population health while floods are the most destructive.
+
